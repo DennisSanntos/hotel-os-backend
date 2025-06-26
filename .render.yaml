@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: hotel-os-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    plan: free
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
