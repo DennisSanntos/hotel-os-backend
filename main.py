@@ -37,11 +37,16 @@ def interpretar():
         agent=interpretador
     )
 
-    resultado = Crew(agents=[interpretador], tasks=[task]).kickoff()
+    try:
+        resultado = Crew(agents=[interpretador], tasks=[task]).kickoff()
 
-    # Converte string retornada para dicionário
-    json_resultado = ast.literal_eval(resultado)
-    return jsonify({"resultado": json_resultado})
+        # Converte string para dicionário
+        json_resultado = ast.literal_eval(resultado)
+
+        return jsonify({"resultado": json_resultado})
+    except Exception as e:
+        return jsonify({"erro": "Erro ao interpretar OS", "mensagem": str(e), "resultado_original": resultado}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
