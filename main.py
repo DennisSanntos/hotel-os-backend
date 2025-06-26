@@ -1,31 +1,35 @@
 from flask import Flask, request, jsonify
 from crewai import Agent, Task, Crew
-import os
-import json
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+import os, ast, asyncio, threading
 
 app = Flask(__name__)
 
-# Usa variável de ambiente definida no Render
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "chave_openai_aqui")
+# Token do seu bot do Telegram
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "7504265835:AAGkAEHaMmBW59SlfQ0ga9XuUF-lsx83zRU")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY", "sua-chave-aqui")
+os.environ["OPENAI_API_KEY"] = OPENAI_KEY
 
-# Define o agente
+# === Agente CrewAI ===
 interpretador = Agent(
-    role="Interpretador de Ordens de Serviço",
-    goal="Extrair dados de OS em linguagem natural",
-    backstory="Especialista em transformar textos livres em campos organizados para planilhas de hotelaria",
-    model="gpt-4o",
-    verbose=False
+    role="Agente de Ordens de Serviço",
+    goal="Interpretar OS em linguagem natural",
+    backstory="Organiza OS de hotel com base em linguagem natural e decide se deve salvar",
+    model="gpt-4o"
 )
 
+# === Endpoint para Apps Script ===
 @app.route("/interpretar", methods=["POST"])
 def interpretar():
-    try:
-        data = request.json
-        texto = data.get("texto", "")
+    data = request.json
+    texto = data.get("texto", "")
+    return jsonify({"resultado": rodar_agente(texto)})
 
-        prompt = f"""
-Você é um assistente de hotelaria. Se o texto abaixo for uma solicitação válida de ordem de serviço (OS), extraia os campos em formato JSON:
-
+# === Função central para rodar o agente ===
+def rodar_agente(texto):
+    prompt = f"""
+Você é um agente inteligente para registrar ordens de serviço de hotelaria. Responda de forma natural, e somente retorne um JSON se for uma ordem de serviço válida com:
 - nome
 - quarto
 - data
@@ -34,35 +38,46 @@ Você é um assistente de hotelaria. Se o texto abaixo for uma solicitação vá
 - detalhes
 - prioridade
 
-Caso o texto não represente uma OS válida (por exemplo: perguntas, saudações ou frases incompletas), **retorne apenas: {{"mensagem": "Sem OS detectada."}}**
+Frase: '{texto}'
+    """
 
-Texto: '{texto}'
-"""
+    task = Task(
+        description=prompt,
+        expected_output="Um JSON com os campos solicitados, apenas se a frase for uma OS válida.",
+        agent=interpretador
+    )
 
-        task = Task(
-            description=prompt,
-            expected_output="Um JSON com os campos solicitados ou mensagem de que não há OS.",
-            agent=interpretador
-        )
+    resultado = Crew(agents=[interpretador], tasks=[task]).kickoff()
 
-        resultado = Crew(agents=[interpretador], tasks=[task]).kickoff()
+    try:
+        json_resultado = ast.literal_eval(resultado.raw)
+        return json_resultado
+    except:
+        return {"mensagem": resultado.raw}
 
-        # Tenta interpretar o retorno do modelo como JSON
-        try:
-            json_resultado = json.loads(resultado.raw)
-        except Exception as e:
-            return jsonify({
-                "erro": "Falha ao interpretar JSON do agente.",
-                "mensagem": str(e),
-                "resultado_bruto": resultado.raw
-            }), 500
+# === Telegram handler ===
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text
+    resposta = rodar_agente(texto)
 
-        return jsonify({"resultado": json_resultado})
+    if isinstance(resposta, dict) and "nome" in resposta:
+        mensagem = f"✅ OS para {resposta['nome']} no quarto {resposta['quarto']} às {resposta['hora']} de {resposta['data']}."
+    else:
+        mensagem = f"🤖 {resposta.get('mensagem', 'Não entendi, pode repetir?')}"
 
-    except Exception as geral:
-        return jsonify({"erro": "Erro inesperado no backend", "mensagem": str(geral)}), 500
+    await update.message.reply_text(mensagem)
 
+# === Inicializar Telegram bot ===
+def iniciar_bot_telegram():
+    app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app_telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app_telegram.run_polling()
 
+# Rodar Telegram em paralelo
+threading.Thread(target=iniciar_bot_telegram).start()
+
+# === Flask ===
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
